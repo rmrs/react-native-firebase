@@ -25,14 +25,14 @@ public class BadgeHelper {
   }
 
   public void setBadgeCount(int badgeCount) {
-    storeBadgeCount(badgeCount);
-    if (badgeCount == 0) {
-      ShortcutBadger.removeCount(mContext);
-      Log.d(TAG, "Remove count");
-    } else {
-      ShortcutBadger.applyCount(mContext, badgeCount);
-      Log.d(TAG, "Apply count: " + badgeCount);
-    }
+    // storeBadgeCount(badgeCount);
+    // if (badgeCount == 0) {
+    //   ShortcutBadger.removeCount(mContext);
+    //   Log.d(TAG, "Remove count");
+    // } else {
+    //   ShortcutBadger.applyCount(mContext, badgeCount);
+    //   Log.d(TAG, "Apply count: " + badgeCount);
+    // }
   }
 
   private void storeBadgeCount(int badgeCount) {

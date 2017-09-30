@@ -9,6 +9,7 @@ import android.util.Log;
 import java.util.Map;
 
 import com.facebook.react.bridge.ActivityEventListener;
+import com.facebook.react.bridge.LifecycleEventListener;
 import com.facebook.react.bridge.Promise;
 import com.facebook.react.bridge.ReactApplicationContext;
 import com.facebook.react.bridge.ReactContextBaseJavaModule;
@@ -27,14 +28,15 @@ import com.google.android.gms.tasks.OnFailureListener;
 
 import io.invertase.firebase.Utils;
 
-public class RNFirebaseLinks extends ReactContextBaseJavaModule implements ActivityEventListener {
+public class RNFirebaseLinks extends ReactContextBaseJavaModule implements ActivityEventListener, LifecycleEventListener {
   private final static String TAG = RNFirebaseLinks.class.getCanonicalName();
-  private String initialLink = null;
+  private String mInitialLink = null;
+  private boolean mInitialLinkInitialized = false;
 
   public RNFirebaseLinks(ReactApplicationContext reactContext) {
     super(reactContext);
-    //getReactApplicationContext().addActivityEventListener(this);
-    //registerLinksHandler();
+    getReactApplicationContext().addActivityEventListener(this);
+    getReactApplicationContext().addLifecycleEventListener(this);
   }
 
   @Override
@@ -42,40 +44,62 @@ public class RNFirebaseLinks extends ReactContextBaseJavaModule implements Activ
     return "RNFirebaseLinks";
   }
 
-  @ReactMethod
-  public void getInitialLink(Promise promise) {
-    promise.resolve(initialLink);
+  private void resloveLink(Intent intent, OnSuccessListener<PendingDynamicLinkData> successListener, OnFailureListener failureListener) {
+    FirebaseDynamicLinks.getInstance()
+      .getDynamicLink(intent)
+      .addOnSuccessListener(successListener)
+      .addOnFailureListener(failureListener);
   }
 
-  private void registerLinksHandler() {
-    Activity activity = getCurrentActivity();
-    if (activity == null) {
-      return;
-    }
-
-    FirebaseDynamicLinks.getInstance()
-      .getDynamicLink(activity.getIntent())
-      .addOnSuccessListener(activity, new OnSuccessListener<PendingDynamicLinkData>() {
-        @Override
-        public void onSuccess(PendingDynamicLinkData pendingDynamicLinkData) {
-          // Get deep link from result (may be null if no link is found)
-          if (pendingDynamicLinkData != null) {
-            Uri deepLinkUri = pendingDynamicLinkData.getLink();
-            String deepLink = deepLinkUri.toString();
-            // TODO: Validate that this is called when opening from a deep link
-            if (initialLink == null) {
-              initialLink = deepLink;
+  @ReactMethod
+  public void getInitialLink(final Promise promise) {
+    if (mInitialLinkInitialized) {
+      promise.resolve(mInitialLink);
+    } else {
+      Activity activity = getCurrentActivity();
+      if (activity != null) {
+        resloveLink(activity.getIntent(), new OnSuccessListener<PendingDynamicLinkData>() {
+          @Override
+          public void onSuccess(PendingDynamicLinkData pendingDynamicLinkData) {
+            if (pendingDynamicLinkData != null) {
+              Uri deepLinkUri = pendingDynamicLinkData.getLink();
+              mInitialLink = deepLinkUri.toString();
+              Log.d(TAG, "getInitialLink received a new dynamic link from pendingDynamicLinkData");
             }
-            Utils.sendEvent(getReactApplicationContext(), "dynamic_link_received", deepLink);
+            Log.d(TAG, "initial link is: " + mInitialLink);
+            promise.resolve(mInitialLink);
+            mInitialLinkInitialized = true;
           }
+        }, new OnFailureListener() {
+          @Override
+          public void onFailure(@NonNull Exception e) {
+            Log.e(TAG, "getInitialLink: failed to getDynamicLink", e);
+            promise.reject("links/getDynamicLink", e.getMessage(), e);
+          }
+        });
+      } else {
+        Log.d(TAG, "getInitialLink: activity is null");
+        promise.resolve(null);
+      }
+    }
+  }
+
+  private void handleLink(Intent intent) {
+    resloveLink(intent, new OnSuccessListener<PendingDynamicLinkData>() {
+      @Override
+      public void onSuccess(PendingDynamicLinkData pendingDynamicLinkData) {
+        if (pendingDynamicLinkData != null) {
+          Uri deepLinkUri = pendingDynamicLinkData.getLink();
+          Log.d(TAG, "handleLink: sending link: " + deepLinkUri.toString());
+          Utils.sendEvent(getReactApplicationContext(), "dynamic_link_received", deepLinkUri.toString());
         }
-      })
-      .addOnFailureListener(activity, new OnFailureListener() {
-        @Override
-        public void onFailure(@NonNull Exception e) {
-          Log.w(TAG, "getDynamicLink:onFailure", e);
-        }
-      });
+      }
+    }, new OnFailureListener() {
+      @Override
+      public void onFailure(@NonNull Exception e) {
+        Log.e(TAG, "handleLink: failed to getDynamicLink", e);
+      }
+    });
   }
 
   @Override
@@ -85,7 +109,23 @@ public class RNFirebaseLinks extends ReactContextBaseJavaModule implements Activ
 
   @Override
   public void onNewIntent(Intent intent) {
-    // TODO: Do I need to re-register the links handler for each new intent?
+    handleLink(intent);
+  }
+
+  @Override
+  public void onHostResume() {
+    // Not required for this module
+  }
+
+  @Override
+  public void onHostPause() {
+    // Not required for this module
+  }
+
+  @Override
+  public void onHostDestroy() {
+    mInitialLink = null;
+    mInitialLinkInitialized = false;
   }
 
   @ReactMethod
@@ -146,7 +186,6 @@ public class RNFirebaseLinks extends ReactContextBaseJavaModule implements Activ
 
   private DynamicLink.Builder getDynamicLinkBuilderFromMap(final Map<String, Object> m) {
     DynamicLink.Builder parametersBuilder = FirebaseDynamicLinks.getInstance().createDynamicLink();
-
     try {
       parametersBuilder.setLink(Uri.parse((String) m.get("link")));
       parametersBuilder.setDynamicLinkDomain((String) m.get("dynamicLinkDomain"));
@@ -158,7 +197,6 @@ public class RNFirebaseLinks extends ReactContextBaseJavaModule implements Activ
     } catch (Exception e) {
       Log.e(TAG, "error while building parameters " + e.getMessage());
     }
-
     return parametersBuilder;
   }
 
@@ -182,7 +220,6 @@ public class RNFirebaseLinks extends ReactContextBaseJavaModule implements Activ
 
   private void setIosParameters(final Map<String, Object> m, final DynamicLink.Builder parametersBuilder) {
     Map<String, Object> iosParameters = (Map<String, Object>) m.get("iosInfo");
-    //TODO: see what happens if bundleId is missing
     if (iosParameters != null && iosParameters.containsKey("iosBundleId")) {
       DynamicLink.IosParameters.Builder iosParametersBuilder = new DynamicLink.IosParameters.Builder((String) iosParameters.get("iosBundleId"));
       if (iosParameters.containsKey("iosAppStoreId")) {
